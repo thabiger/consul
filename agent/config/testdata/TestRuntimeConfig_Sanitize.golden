@@ -159,6 +159,7 @@
     "DNSDisableCompression": false,
     "DNSDomain": "",
     "DNSEnableTruncate": false,
+    "DNSLocalityAwareLookup": "",
     "DNSMaxStale": "0s",
     "DNSNodeMetaTXT": false,
     "DNSNodeTTL": "0s",

@@ -2330,6 +2330,38 @@ func TestLoad_IntegrationWithFlags(t *testing.T) {
 		},
 	})
 	run(t, testCase{
+		desc: "dns locality_aware_lookup is always when configured",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup": "always" }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup = "always" }
+			`},
+		expected: func(rt *RuntimeConfig) {
+			rt.DataDir = dataDir
+			rt.DNSLocalityAwareLookup = "always"
+		},
+	})
+	run(t, testCase{
+		desc: "dns locality_aware_lookup is balanced when configured",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup": "balanced" }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup = "balanced" }
+			`},
+		expected: func(rt *RuntimeConfig) {
+			rt.DataDir = dataDir
+			rt.DNSLocalityAwareLookup = "balanced"
+		},
+	})
+	run(t, testCase{
 		desc: "sidecar_service can't have ID",
 		args: []string{
 			`-data-dir=` + dataDir,
@@ -6621,6 +6653,7 @@ func TestLoad_FullConfig(t *testing.T) {
 		DNSAddrs:                               []net.Addr{tcpAddr("93.95.95.81:7001"), udpAddr("93.95.95.81:7001")},
 		DNSARecordLimit:                        29907,
 		DNSAllowStale:                          true,
+		DNSLocalityAwareLookup:                 "balanced",
 		DNSDisableCompression:                  true,
 		DNSDomain:                              "7W1xXSqd",
 		DNSAltDomain:                           "1789hsd",

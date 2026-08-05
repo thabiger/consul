@@ -261,6 +261,7 @@ alt_domain = "1789hsd"
 dns_config {
     allow_stale = true
     a_record_limit = 29907
+    locality_aware_lookup = "balanced"
     disable_compression = true
     enable_truncate = true
     max_stale = "29685s"
