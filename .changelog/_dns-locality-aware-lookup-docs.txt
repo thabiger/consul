@@ -1,3 +1,3 @@
 ```release-note:improvement
-dns: Added DNS locality-aware lookup via `dns_config.locality_aware_lookup`. Operators must provision Consul locality on agents and service instances. This option only affects in-agent DNS response candidate selection and does not change Connect, xDS, service mesh, or Enterprise locality-aware routing behavior.
+dns: Added DNS locality-aware lookup via `dns_config.locality_aware_lookup`, with optional mutually exclusive `locality_aware_lookup_service_allowlist` and `locality_aware_lookup_service_blocklist` to scope filtering to selected services. Operators must provision Consul locality on agents and service instances. These options only affect in-agent DNS response candidate selection and do not change Connect, xDS, service mesh, or Enterprise locality-aware routing behavior.
 ```

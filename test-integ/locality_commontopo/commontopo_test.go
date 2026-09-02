@@ -108,7 +108,7 @@ func assertDNSLocalityAwareLookup(t *testing.T, ct *commonTopo) {
 						return
 					}
 
-					expectedIPs := expectedDNSIPsForQuery(cluster, entries, queryZone)
+					expectedIPs := expectedDNSIPsForQuery(cluster, svc.Name, entries, queryZone)
 					require.NotEmpty(r, expectedIPs,
 						"no expected %s IPs for %s zone %s (mode=%q)",
 						svc.Name, cluster.Name, queryZone, cluster.LocalityAwareLookup)
@@ -160,10 +160,14 @@ func serviceZonesInBalance(entries []*api.ServiceEntry, region, queryZone string
 }
 
 // expectedDNSIPsForQuery returns the service IPs that should appear in DNS answers
-// for a query client in queryZone, given the cluster's locality_aware_lookup mode.
+// for a query client in queryZone, given the cluster's locality-aware DNS settings.
 // IPs are derived from the same health entries used for the balance check so
 // expectations stay consistent while the catalog is still converging.
-func expectedDNSIPsForQuery(cluster clusterSpec, entries []*api.ServiceEntry, queryZone string) []string {
+func expectedDNSIPsForQuery(cluster clusterSpec, service string, entries []*api.ServiceEntry, queryZone string) []string {
+	if !localityAwareLookupAppliesToService(cluster, service) {
+		return ipsFromServiceEntries(entries, "")
+	}
+
 	switch cluster.LocalityAwareLookup {
 	case "off":
 		return ipsFromServiceEntries(entries, "")
@@ -177,6 +181,26 @@ func expectedDNSIPsForQuery(cluster clusterSpec, entries []*api.ServiceEntry, qu
 	default:
 		return ipsFromServiceEntries(entries, queryZone)
 	}
+}
+
+// localityAwareLookupAppliesToService mirrors dnsServerConfig.localityAwareLookupAppliesTo.
+func localityAwareLookupAppliesToService(cluster clusterSpec, service string) bool {
+	if len(cluster.ServiceAllowlist) > 0 {
+		return containsService(cluster.ServiceAllowlist, service)
+	}
+	if len(cluster.ServiceBlocklist) > 0 {
+		return !containsService(cluster.ServiceBlocklist, service)
+	}
+	return true
+}
+
+func containsService(services []string, service string) bool {
+	for _, candidate := range services {
+		if candidate == service {
+			return true
+		}
+	}
+	return false
 }
 
 // lookupARecordsInContainer runs dig inside the node's container and returns A record IPs.

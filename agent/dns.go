@@ -86,21 +86,27 @@ type dnsServerConfig struct {
 	LocalityAwareLookup string
 	// Locality is this agent's configured region/zone; used when
 	// LocalityAwareLookup is not "off".
-	Locality         *structs.Locality
-	MaxStale         time.Duration
-	UseCache         bool
-	CacheMaxAge      time.Duration
-	NodeName         string
-	NodeTTL          time.Duration
-	OnlyPassing      bool
-	RecursorStrategy structs.RecursorStrategy
-	RecursorTimeout  time.Duration
-	Recursors        []string
-	SegmentName      string
-	UDPAnswerLimit   int
-	ARecordLimit     int
-	NodeMetaTXT      bool
-	SOAConfig        dnsSOAConfig
+	Locality *structs.Locality
+	// LocalityAwareLookupServiceAllowlist, when non-empty, limits locality-
+	// aware filtering to these exact service names.
+	LocalityAwareLookupServiceAllowlist map[string]struct{}
+	// LocalityAwareLookupServiceBlocklist, when non-empty, skips locality-
+	// aware filtering for these exact service names.
+	LocalityAwareLookupServiceBlocklist map[string]struct{}
+	MaxStale                            time.Duration
+	UseCache                            bool
+	CacheMaxAge                         time.Duration
+	NodeName                            string
+	NodeTTL                             time.Duration
+	OnlyPassing                         bool
+	RecursorStrategy                    structs.RecursorStrategy
+	RecursorTimeout                     time.Duration
+	Recursors                           []string
+	SegmentName                         string
+	UDPAnswerLimit                      int
+	ARecordLimit                        int
+	NodeMetaTXT                         bool
+	SOAConfig                           dnsSOAConfig
 	// TTLRadix sets service TTLs by prefix, eg: "database-*"
 	TTLRadix *radix.Tree
 	// TTLStict sets TTLs to service by full name match. It Has higher priority than TTLRadix
@@ -195,18 +201,24 @@ func getDNSServerConfig(conf *config.RuntimeConfig) (*dnsServerConfig, error) {
 		EnableTruncate:      conf.DNSEnableTruncate,
 		LocalityAwareLookup: conf.DNSLocalityAwareLookup,
 		Locality:            conf.StructLocality(),
-		MaxStale:            conf.DNSMaxStale,
-		NodeName:            conf.NodeName,
-		NodeTTL:             conf.DNSNodeTTL,
-		OnlyPassing:         conf.DNSOnlyPassing,
-		RecursorStrategy:    conf.DNSRecursorStrategy,
-		RecursorTimeout:     conf.DNSRecursorTimeout,
-		SegmentName:         conf.SegmentName,
-		UDPAnswerLimit:      conf.DNSUDPAnswerLimit,
-		NodeMetaTXT:         conf.DNSNodeMetaTXT,
-		DisableCompression:  conf.DNSDisableCompression,
-		UseCache:            conf.DNSUseCache,
-		CacheMaxAge:         conf.DNSCacheMaxAge,
+		LocalityAwareLookupServiceAllowlist: serviceNameSet(
+			conf.DNSLocalityAwareLookupServiceAllowlist,
+		),
+		LocalityAwareLookupServiceBlocklist: serviceNameSet(
+			conf.DNSLocalityAwareLookupServiceBlocklist,
+		),
+		MaxStale:           conf.DNSMaxStale,
+		NodeName:           conf.NodeName,
+		NodeTTL:            conf.DNSNodeTTL,
+		OnlyPassing:        conf.DNSOnlyPassing,
+		RecursorStrategy:   conf.DNSRecursorStrategy,
+		RecursorTimeout:    conf.DNSRecursorTimeout,
+		SegmentName:        conf.SegmentName,
+		UDPAnswerLimit:     conf.DNSUDPAnswerLimit,
+		NodeMetaTXT:        conf.DNSNodeMetaTXT,
+		DisableCompression: conf.DNSDisableCompression,
+		UseCache:           conf.DNSUseCache,
+		CacheMaxAge:        conf.DNSCacheMaxAge,
 		SOAConfig: dnsSOAConfig{
 			Expire:  conf.DNSSOA.Expire,
 			Minttl:  conf.DNSSOA.Minttl,
@@ -256,6 +268,34 @@ func (cfg *dnsServerConfig) GetTTLForService(service string) (time.Duration, boo
 		}
 	}
 	return 0, false
+}
+
+// serviceNameSet builds an O(1) lookup set from a list of service names.
+// Returns nil when the list is empty so callers can treat unset and empty alike.
+func serviceNameSet(names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		set[name] = struct{}{}
+	}
+	return set
+}
+
+// localityAwareLookupAppliesTo reports whether locality-aware filtering should
+// run for the given service name, based on the configured allowlist/blocklist.
+// When neither list is set, locality applies to all services.
+func (cfg *dnsServerConfig) localityAwareLookupAppliesTo(service string) bool {
+	if len(cfg.LocalityAwareLookupServiceAllowlist) > 0 {
+		_, ok := cfg.LocalityAwareLookupServiceAllowlist[service]
+		return ok
+	}
+	if len(cfg.LocalityAwareLookupServiceBlocklist) > 0 {
+		_, blocked := cfg.LocalityAwareLookupServiceBlocklist[service]
+		return !blocked
+	}
+	return true
 }
 
 func (d *DNSServer) ListenAndServe(network, addr string, notif func()) error {
@@ -1557,7 +1597,8 @@ func (d *DNSServer) handleServiceQuery(cfg *dnsRequestConfig, lookup serviceLook
 		return errNameNotFound
 	}
 
-	if cfg.LocalityAwareLookup != localityAwareLookupModeOff {
+	if cfg.LocalityAwareLookup != localityAwareLookupModeOff &&
+		cfg.localityAwareLookupAppliesTo(lookup.Service) {
 		out.Nodes = filterCheckServiceNodesForLocalityAwareLookup(out.Nodes, cfg.Locality, cfg.LocalityAwareLookup)
 	}
 
@@ -1783,7 +1824,8 @@ func (d *DNSServer) handlePreparedQuery(cfg *dnsRequestConfig, datacenter, query
 		return errNameNotFound
 	}
 
-	if cfg.LocalityAwareLookup != localityAwareLookupModeOff {
+	if cfg.LocalityAwareLookup != localityAwareLookupModeOff &&
+		cfg.localityAwareLookupAppliesTo(out.Service) {
 		out.Nodes = filterCheckServiceNodesForLocalityAwareLookup(out.Nodes, cfg.Locality, cfg.LocalityAwareLookup)
 	}
 

@@ -492,6 +492,68 @@ func TestFilterCheckServiceNodesForLocalityAwareLookup(t *testing.T) {
 	}
 }
 
+func TestLocalityAwareLookupAppliesTo(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowlist []string
+		blocklist []string
+		service   string
+		want      bool
+	}{
+		{
+			name:    "neither list applies to all services",
+			service: "db",
+			want:    true,
+		},
+		{
+			name:      "allowlist includes service",
+			allowlist: []string{"db", "api"},
+			service:   "db",
+			want:      true,
+		},
+		{
+			name:      "allowlist excludes service",
+			allowlist: []string{"db", "api"},
+			service:   "cache",
+			want:      false,
+		},
+		{
+			name:      "blocklist excludes service",
+			blocklist: []string{"cache"},
+			service:   "cache",
+			want:      false,
+		},
+		{
+			name:      "blocklist includes other services",
+			blocklist: []string{"cache"},
+			service:   "db",
+			want:      true,
+		},
+		{
+			name:      "empty allowlist treated as unset",
+			allowlist: []string{},
+			service:   "db",
+			want:      true,
+		},
+		{
+			name:      "empty blocklist treated as unset",
+			blocklist: []string{},
+			service:   "db",
+			want:      true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &dnsServerConfig{
+				LocalityAwareLookupServiceAllowlist: serviceNameSet(tc.allowlist),
+				LocalityAwareLookupServiceBlocklist: serviceNameSet(tc.blocklist),
+			}
+			require.Equal(t, tc.want, cfg.localityAwareLookupAppliesTo(tc.service))
+		})
+	}
+}
+
 func checkServiceNodeNames(nodes structs.CheckServiceNodes) []string {
 	names := make([]string, 0, len(nodes))
 	for _, node := range nodes {

@@ -499,6 +499,136 @@ func TestDNS_ServiceLookupLocalityAwareLookupFiltersServiceAndPreparedQuery(t *t
 	}
 }
 
+// TestDNS_ServiceLookupLocalityAwareLookupServiceAllowlistAndBlocklist checks
+// that locality filtering is scoped by mutually exclusive service allow/block lists.
+func TestDNS_ServiceLookupLocalityAwareLookupServiceAllowlistAndBlocklist(t *testing.T) {
+	if testing.Short() {
+		t.Skip("too slow for testing.Short")
+	}
+
+	registerService := func(t *testing.T, a *TestAgent, service, nodeName, address, zone string) {
+		t.Helper()
+		args := &structs.RegisterRequest{
+			Datacenter: "dc1",
+			Node:       nodeName,
+			Address:    address,
+			Service: &structs.NodeService{
+				ID:      nodeName + "-" + service,
+				Service: service,
+				Port:    12345,
+				Locality: &structs.Locality{
+					Region: "eu-west",
+					Zone:   zone,
+				},
+			},
+		}
+		var out struct{}
+		require.NoError(t, a.RPC(context.Background(), "Catalog.Register", args, &out))
+	}
+
+	t.Run("allowlist only applies locality to listed services", func(t *testing.T) {
+		a := NewTestAgent(t, `
+			locality {
+				region = "eu-west"
+				zone = "1"
+			}
+			dns_config {
+				locality_aware_lookup = "always"
+				locality_aware_lookup_service_allowlist = ["db"]
+			}
+		`)
+		defer a.Shutdown()
+		testrpc.WaitForLeader(t, a.RPC, "dc1")
+
+		registerService(t, a, "db", "db-local", "127.0.0.10", "1")
+		registerService(t, a, "db", "db-remote", "127.0.0.20", "2")
+		registerService(t, a, "web", "web-local", "127.0.0.30", "1")
+		registerService(t, a, "web", "web-remote", "127.0.0.40", "2")
+
+		var queryID string
+		{
+			args := &structs.PreparedQueryRequest{
+				Datacenter: "dc1",
+				Op:         structs.PreparedQueryCreate,
+				Query: &structs.PreparedQuery{
+					Name: "locality-allowlist-db",
+					Service: structs.ServiceQuery{
+						Service: "db",
+					},
+				},
+			}
+			require.NoError(t, a.RPC(context.Background(), "PreparedQuery.Apply", args, &queryID))
+		}
+
+		c := new(dns.Client)
+
+		m := new(dns.Msg)
+		m.SetQuestion("db.service.consul.", dns.TypeA)
+		in, _, err := c.Exchange(m, a.DNSAddr())
+		require.NoError(t, err)
+		require.Len(t, in.Answer, 1)
+		require.Equal(t, "127.0.0.10", in.Answer[0].(*dns.A).A.String())
+
+		m = new(dns.Msg)
+		m.SetQuestion("web.service.consul.", dns.TypeA)
+		in, _, err = c.Exchange(m, a.DNSAddr())
+		require.NoError(t, err)
+		require.Len(t, in.Answer, 2)
+		addrs := []string{
+			in.Answer[0].(*dns.A).A.String(),
+			in.Answer[1].(*dns.A).A.String(),
+		}
+		require.ElementsMatch(t, []string{"127.0.0.30", "127.0.0.40"}, addrs)
+
+		m = new(dns.Msg)
+		m.SetQuestion(queryID+".query.consul.", dns.TypeA)
+		in, _, err = c.Exchange(m, a.DNSAddr())
+		require.NoError(t, err)
+		require.Len(t, in.Answer, 1)
+		require.Equal(t, "127.0.0.10", in.Answer[0].(*dns.A).A.String())
+	})
+
+	t.Run("blocklist skips locality for listed services", func(t *testing.T) {
+		a := NewTestAgent(t, `
+			locality {
+				region = "eu-west"
+				zone = "1"
+			}
+			dns_config {
+				locality_aware_lookup = "always"
+				locality_aware_lookup_service_blocklist = ["web"]
+			}
+		`)
+		defer a.Shutdown()
+		testrpc.WaitForLeader(t, a.RPC, "dc1")
+
+		registerService(t, a, "db", "db-local", "127.0.0.10", "1")
+		registerService(t, a, "db", "db-remote", "127.0.0.20", "2")
+		registerService(t, a, "web", "web-local", "127.0.0.30", "1")
+		registerService(t, a, "web", "web-remote", "127.0.0.40", "2")
+
+		c := new(dns.Client)
+
+		m := new(dns.Msg)
+		m.SetQuestion("db.service.consul.", dns.TypeA)
+		in, _, err := c.Exchange(m, a.DNSAddr())
+		require.NoError(t, err)
+		require.Len(t, in.Answer, 1)
+		require.Equal(t, "127.0.0.10", in.Answer[0].(*dns.A).A.String())
+
+		m = new(dns.Msg)
+		m.SetQuestion("web.service.consul.", dns.TypeA)
+		in, _, err = c.Exchange(m, a.DNSAddr())
+		require.NoError(t, err)
+		require.Len(t, in.Answer, 2)
+		addrs := []string{
+			in.Answer[0].(*dns.A).A.String(),
+			in.Answer[1].(*dns.A).A.String(),
+		}
+		require.ElementsMatch(t, []string{"127.0.0.30", "127.0.0.40"}, addrs)
+	})
+}
+
 // TestDNS_ServiceLookupLocalityAwareLookupFallsBackWhenNoMatches checks that
 // with no same-zone instances, "always" mode still prefers same-region nodes
 // over other regions.

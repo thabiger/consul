@@ -32,9 +32,10 @@ const (
 var (
 	service1 = serviceSpec{Name: "service1", Port: 8080}
 	service2 = serviceSpec{Name: "service2", Port: 9080}
+	service3 = serviceSpec{Name: "service3", Port: 10080}
 
 	// topologyServices lists every service that may appear in node Workloads.
-	topologyServices = []serviceSpec{service1, service2}
+	topologyServices = []serviceSpec{service1, service2, service3}
 )
 
 type commonTopo struct {
@@ -65,7 +66,7 @@ type TopologyAccessor interface {
 }
 
 // newTopologySpec is the fixed multi-DC layout used by locality DNS tests.
-// Set nodeSpec.Workloads per client to the services that run there (e.g. []serviceSpec{service1, service2}).
+// Set nodeSpec.Workloads per client to the services that run there.
 func newTopologySpec() topologySpec {
 	return topologySpec{
 		Clusters: map[string]clusterSpec{
@@ -75,6 +76,7 @@ func newTopologySpec() topologySpec {
 				Region:              topologyRegionA,
 				Zones:               []string{"zone-a1", "zone-a2"},
 				LocalityAwareLookup: "always",
+				ServiceBlocklist:    []string{service3.Name},
 				Nodes: []nodeSpec{
 					{Name: "dc1-server1", Role: "server", Zone: "zone-a1"},
 					{Name: "dc1-server2", Role: "server", Zone: "zone-a1"},
@@ -84,13 +86,13 @@ func newTopologySpec() topologySpec {
 						Name:      "dc1-client2",
 						Role:      "client",
 						Zone:      "zone-a1",
-						Workloads: []serviceSpec{service1},
+						Workloads: []serviceSpec{service1, service3},
 					},
 					{
 						Name:      "dc1-client3",
 						Role:      "client",
 						Zone:      "zone-a1",
-						Workloads: []serviceSpec{service1},
+						Workloads: []serviceSpec{service1, service3},
 					},
 					{
 						Name:      "dc1-client4",
@@ -103,13 +105,13 @@ func newTopologySpec() topologySpec {
 						Name:      "dc1-client6",
 						Role:      "client",
 						Zone:      "zone-a2",
-						Workloads: []serviceSpec{service1},
+						Workloads: []serviceSpec{service1, service3},
 					},
 					{
 						Name:      "dc1-client7",
 						Role:      "client",
 						Zone:      "zone-a2",
-						Workloads: []serviceSpec{service1},
+						Workloads: []serviceSpec{service1, service3},
 					},
 				},
 			},
@@ -119,6 +121,7 @@ func newTopologySpec() topologySpec {
 				Region:              topologyRegionB,
 				Zones:               []string{"zone-b1", "zone-b2"},
 				LocalityAwareLookup: "balanced",
+				ServiceAllowlist:    []string{service1.Name, service2.Name},
 				Nodes: []nodeSpec{
 					{Name: "dc2-server1", Role: "server", Zone: "zone-b1"},
 					{Name: "dc2-server2", Role: "server", Zone: "zone-b1"},
@@ -128,13 +131,13 @@ func newTopologySpec() topologySpec {
 						Name:      "dc2-client2",
 						Role:      "client",
 						Zone:      "zone-b1",
-						Workloads: []serviceSpec{service1, service2},
+						Workloads: []serviceSpec{service1, service2, service3},
 					},
 					{
 						Name:      "dc2-client3",
 						Role:      "client",
 						Zone:      "zone-b1",
-						Workloads: []serviceSpec{service1, service2},
+						Workloads: []serviceSpec{service1, service2, service3},
 					},
 					{
 						Name:      "dc2-client4",
@@ -147,13 +150,13 @@ func newTopologySpec() topologySpec {
 						Name:      "dc2-client6",
 						Role:      "client",
 						Zone:      "zone-b2",
-						Workloads: []serviceSpec{service1, service2},
+						Workloads: []serviceSpec{service1, service2, service3},
 					},
 					{
 						Name:      "dc2-client7",
 						Role:      "client",
 						Zone:      "zone-b2",
-						Workloads: []serviceSpec{service1, service2},
+						Workloads: []serviceSpec{service1, service2, service3},
 					},
 				},
 			},
@@ -183,8 +186,11 @@ type clusterSpec struct {
 	Region     string
 	// LocalityAwareLookup is dns_config.locality_aware_lookup for client agents in this cluster.
 	LocalityAwareLookup string
-	Zones               []string
-	Nodes               []nodeSpec
+	// ServiceAllowlist and ServiceBlocklist scope locality-aware lookup by exact service name.
+	ServiceAllowlist []string
+	ServiceBlocklist []string
+	Zones            []string
+	Nodes            []nodeSpec
 }
 
 type nodeSpec struct {
@@ -500,10 +506,17 @@ func buildNode(cluster clusterSpec, spec nodeSpec) *topology.Node {
 	}
 
 	return &topology.Node{
-		Kind:        nodeRole(spec.Role),
-		Name:        spec.Name,
-		Meta:        localityMeta(cluster.Region, spec.Zone),
-		ExtraConfig: localityConfig(cluster.Region, spec.Zone, spec.Role, cluster.LocalityAwareLookup),
+		Kind: nodeRole(spec.Role),
+		Name: spec.Name,
+		Meta: localityMeta(cluster.Region, spec.Zone),
+		ExtraConfig: localityConfig(
+			cluster.Region,
+			spec.Zone,
+			spec.Role,
+			cluster.LocalityAwareLookup,
+			cluster.ServiceAllowlist,
+			cluster.ServiceBlocklist,
+		),
 		Addresses: []*topology.Address{
 			{Network: cluster.Datacenter},
 		},
@@ -531,16 +544,34 @@ func localityMeta(region, zone string) map[string]string {
 	}
 }
 
-// localityConfig returns an HCL snippet for agent locality and, on clients, dns_config.locality_aware_lookup.
-func localityConfig(region, zone, role, localityAwareLookup string) string {
+// localityConfig returns an HCL snippet for agent locality and client DNS locality settings.
+func localityConfig(
+	region, zone, role, localityAwareLookup string,
+	localityAwareAllowlist, localityAwareBlocklist []string,
+) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "locality {\n  region = %q\n  zone = %q\n}\n", region, zone)
 	if role == "client" && localityAwareLookup != "" {
-		fmt.Fprintf(&b, "dns_config {\n  locality_aware_lookup = %q\n}\n", localityAwareLookup)
+		fmt.Fprintf(&b, "dns_config {\n  locality_aware_lookup = %q\n", localityAwareLookup)
+		if len(localityAwareAllowlist) > 0 {
+			fmt.Fprintf(&b, "  locality_aware_lookup_service_allowlist = [%s]\n", quoteList(localityAwareAllowlist))
+		}
+		if len(localityAwareBlocklist) > 0 {
+			fmt.Fprintf(&b, "  locality_aware_lookup_service_blocklist = [%s]\n", quoteList(localityAwareBlocklist))
+		}
+		b.WriteString("}\n")
 	}
 
 	return b.String()
+}
+
+func quoteList(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, strconv.Quote(value))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // serviceWorkload defines a Fortio workload registered under the given service.
