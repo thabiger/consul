@@ -79,7 +79,30 @@ flowchart TB
   class svc1,svc2,svc3 service
 ```
 
-Legend: **query** = client with empty `Workloads` (see `NodesSpecs(..., "query", ...)`). Workloads are Fortio sidecars on the client agent. `service1` and `service2` retain the mode baselines: in `dc1` (`always`), `service1` is zone-local; in `dc2` (`balanced`), uneven `service1` may return the whole datacenter while even `service2` stays zone-local. Evenly distributed `service3` is the service-list probe and returns all zones because it is blocklisted in `dc1` and omitted from the `dc2` allowlist.
+**Legend:**
+
+- **Nodes:**
+
+  - **query node**: A client node with no `Workloads` assigned (see `NodesSpecs(..., "query", ...)`).
+      - These act as pure query clients.
+
+  - **service nodes**:
+      - Workloads, when present, are Fortio sidecars running on the client agent.
+
+  - **server nodes**:
+      - These are purely consul masters
+
+- **Locality-aware lookup modes:**
+    - `service1` and `service2` demonstrate different locality lookup modes:
+        - In `dc1` (`always` mode):
+            - `service1` answers are restricted to be zone-local.
+        - In `dc2` (`balanced` mode):
+            - For unevenly distributed services like `service1`, lookups may return instances from the entire datacenter.
+            - Evenly distributed services like `service2` will return only zone-local results.
+    - `service3`:
+        - This service is evenly distributed and serves as a test probe.
+        - In `dc1`, it is **blocklisted**, and in `dc2`, it is **not included** in the allowlist.
+        - As a result, DNS for `service3` ignores zone-locality and returns instances from all zones.
 
 ### Clusters (`clusterSpec`)
 
@@ -129,11 +152,11 @@ Every server and client gets:
 
 Client agents only also get:
 
-- `dns_config { locality_aware_lookup = "<cluster LocalityAwareLookup>" }`
+- `dns_config { locality_aware_lookup = "<cluster LocalityAwareLookup>: off|always|balanced" }`
 - `dc1`: `locality_aware_lookup_service_blocklist = ["service3"]`
 - `dc2`: `locality_aware_lookup_service_allowlist = ["service1", "service2"]`
 
-Optional mutually exclusive service scopes (exact name match):
+Optional mutually exclusive service scopes (exact name match after DNS case normalization):
 
 - `locality_aware_lookup_service_allowlist = ["svc"]` — locality filtering only for listed services
 - `locality_aware_lookup_service_blocklist = ["svc"]` — locality filtering for all services except listed ones
@@ -142,7 +165,7 @@ To add workloads, set `nodeSpec.Workloads` in `newTopologySpec()` (for example `
 
 ## DNS behavior (`TestCommonTopologySetup`)
 
-Launch waits for passing registrations for every service with workloads (`waitForPassingServices`), then `assertDNSLocalityAwareLookup` runs `dig` from every query client (clients with no `Workloads`):
+Launch waits for passing registrations for every service with workloads (`waitForPassingServices`), then `assertDNSLocalityAwareLookup` runs service DNS `dig` lookups from every query client (clients with no `Workloads`):
 
 | Service | `dc1` (`always`) | `dc2` (`balanced`) |
 |---------|------------------|---------------------|

@@ -518,6 +518,18 @@ func TestLocalityAwareLookupAppliesTo(t *testing.T) {
 			want:      false,
 		},
 		{
+			name:      "mixed-case allowlist matches lowercase service",
+			allowlist: []string{"DB", "Api"},
+			service:   "db",
+			want:      true,
+		},
+		{
+			name:      "lowercase allowlist matches mixed-case service",
+			allowlist: []string{"db", "api"},
+			service:   "DB",
+			want:      true,
+		},
+		{
 			name:      "blocklist excludes service",
 			blocklist: []string{"cache"},
 			service:   "cache",
@@ -528,6 +540,18 @@ func TestLocalityAwareLookupAppliesTo(t *testing.T) {
 			blocklist: []string{"cache"},
 			service:   "db",
 			want:      true,
+		},
+		{
+			name:      "mixed-case blocklist excludes lowercase service",
+			blocklist: []string{"Cache"},
+			service:   "cache",
+			want:      false,
+		},
+		{
+			name:      "lowercase blocklist excludes mixed-case service",
+			blocklist: []string{"cache"},
+			service:   "Cache",
+			want:      false,
 		},
 		{
 			name:      "empty allowlist treated as unset",
@@ -550,6 +574,66 @@ func TestLocalityAwareLookupAppliesTo(t *testing.T) {
 				LocalityAwareLookupServiceBlocklist: serviceNameSet(tc.blocklist),
 			}
 			require.Equal(t, tc.want, cfg.localityAwareLookupAppliesTo(tc.service))
+		})
+	}
+}
+
+func TestLocalityAwareLookupAppliesToLookup(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowlist []string
+		blocklist []string
+		lookup    serviceLookup
+		want      bool
+	}{
+		{
+			name:   "regular service lookup applies",
+			lookup: serviceLookup{Service: "db"},
+			want:   true,
+		},
+		{
+			name:   "connect lookup does not apply",
+			lookup: serviceLookup{Service: "db", Connect: true},
+			want:   false,
+		},
+		{
+			name:   "ingress lookup does not apply",
+			lookup: serviceLookup{Service: "db", Ingress: true},
+			want:   false,
+		},
+		{
+			name:      "allowlist still scopes regular service lookup",
+			allowlist: []string{"db"},
+			lookup:    serviceLookup{Service: "cache"},
+			want:      false,
+		},
+		{
+			name:      "mixed-case allowlist applies through regular service lookup",
+			allowlist: []string{"DB"},
+			lookup:    serviceLookup{Service: "db"},
+			want:      true,
+		},
+		{
+			name:      "blocklist still scopes regular service lookup",
+			blocklist: []string{"cache"},
+			lookup:    serviceLookup{Service: "cache"},
+			want:      false,
+		},
+		{
+			name:      "mixed-case blocklist applies through regular service lookup",
+			blocklist: []string{"Cache"},
+			lookup:    serviceLookup{Service: "cache"},
+			want:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &dnsServerConfig{
+				LocalityAwareLookupServiceAllowlist: serviceNameSet(tc.allowlist),
+				LocalityAwareLookupServiceBlocklist: serviceNameSet(tc.blocklist),
+			}
+			require.Equal(t, tc.want, cfg.localityAwareLookupAppliesToLookup(tc.lookup))
 		})
 	}
 }

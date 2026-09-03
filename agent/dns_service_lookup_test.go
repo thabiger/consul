@@ -534,7 +534,7 @@ func TestDNS_ServiceLookupLocalityAwareLookupServiceAllowlistAndBlocklist(t *tes
 			}
 			dns_config {
 				locality_aware_lookup = "always"
-				locality_aware_lookup_service_allowlist = ["db"]
+				locality_aware_lookup_service_allowlist = ["DB"]
 			}
 		`)
 		defer a.Shutdown()
@@ -596,7 +596,7 @@ func TestDNS_ServiceLookupLocalityAwareLookupServiceAllowlistAndBlocklist(t *tes
 			}
 			dns_config {
 				locality_aware_lookup = "always"
-				locality_aware_lookup_service_blocklist = ["web"]
+				locality_aware_lookup_service_blocklist = ["WEB"]
 			}
 		`)
 		defer a.Shutdown()
@@ -1082,6 +1082,80 @@ func TestDNS_ConnectServiceLookup(t *testing.T) {
 
 }
 
+func TestDNS_ConnectServiceLookupLocalityAwareLookupIgnored(t *testing.T) {
+	netutil.GetAgentBindAddrFunc = netutil.GetMockGetAgentBindAddrFunc("0.0.0.0")
+	if testing.Short() {
+		t.Skip("too slow for testing.Short")
+	}
+
+	a := NewTestAgent(t, `
+		locality {
+			region = "eu-west"
+			zone = "1"
+		}
+		dns_config {
+			locality_aware_lookup = "always"
+		}
+	`)
+	defer a.Shutdown()
+	testrpc.WaitForLeader(t, a.RPC, "dc1")
+
+	registerProxy := func(nodeName, address, zone string) {
+		t.Helper()
+
+		args := structs.TestRegisterRequestProxy(t)
+		args.Node = nodeName
+		args.Address = address
+		args.Locality = &structs.Locality{
+			Region: "eu-west",
+			Zone:   zone,
+		}
+		args.Service.ID = nodeName + "-proxy"
+		args.Service.Proxy.DestinationServiceName = "db"
+		args.Service.Address = ""
+		args.Service.Port = 12345
+		args.Service.Locality = &structs.Locality{
+			Region: "eu-west",
+			Zone:   zone,
+		}
+
+		var out struct{}
+		require.NoError(t, a.RPC(context.Background(), "Catalog.Register", args, &out))
+	}
+
+	registerProxy("connect-local", "127.0.0.55", "1")
+	registerProxy("connect-remote", "127.0.0.56", "2")
+
+	m := new(dns.Msg)
+	m.SetQuestion("db.connect.consul.", dns.TypeSRV)
+
+	c := new(dns.Client)
+	in, _, err := c.Exchange(m, a.DNSAddr())
+	require.NoError(t, err)
+	require.Len(t, in.Answer, 2)
+	require.Len(t, in.Extra, 2)
+
+	targets := make([]string, 0, len(in.Answer))
+	for _, answer := range in.Answer {
+		srvRec, ok := answer.(*dns.SRV)
+		require.True(t, ok)
+		require.Equal(t, uint16(12345), srvRec.Port)
+		targets = append(targets, srvRec.Target)
+	}
+	require.ElementsMatch(t, []string{
+		"connect-local.node.dc1.consul.",
+		"connect-remote.node.dc1.consul.",
+	}, targets)
+
+	addrs := make([]string, 0, len(in.Extra))
+	for _, extra := range in.Extra {
+		aRec, ok := extra.(*dns.A)
+		require.True(t, ok)
+		addrs = append(addrs, aRec.A.String())
+	}
+	require.ElementsMatch(t, []string{"127.0.0.55", "127.0.0.56"}, addrs)
+}
+
 func TestDNS_IngressServiceLookup(t *testing.T) {
 	if testing.Short() {
 		t.Skip("too slow for testing.Short")
@@ -1185,6 +1259,131 @@ func TestDNS_IngressServiceLookup(t *testing.T) {
 			require.Equal(t, "127.0.0.1", cnameRec.A.String())
 		})
 	}
+}
+
+func TestDNS_IngressServiceLookupLocalityAwareLookupIgnored(t *testing.T) {
+	if testing.Short() {
+		t.Skip("too slow for testing.Short")
+	}
+
+	a := NewTestAgent(t, `
+		locality {
+			region = "eu-west"
+			zone = "1"
+		}
+		dns_config {
+			locality_aware_lookup = "always"
+		}
+	`)
+	defer a.Shutdown()
+	testrpc.WaitForLeader(t, a.RPC, "dc1")
+
+	registerIngressGateway := func(nodeName, address, zone string) {
+		t.Helper()
+
+		args := structs.TestRegisterIngressGateway(t)
+		args.Node = nodeName
+		args.Address = address
+		args.Locality = &structs.Locality{
+			Region: "eu-west",
+			Zone:   zone,
+		}
+		args.Service.ID = nodeName + "-ingress-gateway"
+		args.Service.Address = ""
+		args.Service.Locality = &structs.Locality{
+			Region: "eu-west",
+			Zone:   zone,
+		}
+
+		var out struct{}
+		require.NoError(t, a.RPC(context.Background(), "Catalog.Register", args, &out))
+	}
+
+	registerIngressGateway("ingress-local", "127.0.0.71", "1")
+	registerIngressGateway("ingress-remote", "127.0.0.72", "2")
+
+	{
+		args := &structs.RegisterRequest{
+			Datacenter: "dc1",
+			Node:       "service-node",
+			Address:    "127.0.0.80",
+			Locality: &structs.Locality{
+				Region: "eu-west",
+				Zone:   "1",
+			},
+			Service: &structs.NodeService{
+				Service: "db",
+				Address: "",
+				Port:    80,
+				Locality: &structs.Locality{
+					Region: "eu-west",
+					Zone:   "1",
+				},
+			},
+		}
+
+		var out struct{}
+		require.NoError(t, a.RPC(context.Background(), "Catalog.Register", args, &out))
+	}
+
+	{
+		req := structs.ConfigEntryRequest{
+			Op:         structs.ConfigEntryUpsert,
+			Datacenter: "dc1",
+			Entry: &structs.ProxyConfigEntry{
+				Kind: structs.ProxyDefaults,
+				Name: structs.ProxyConfigGlobal,
+				Config: map[string]interface{}{
+					"protocol": "http",
+				},
+			},
+			WriteRequest: structs.WriteRequest{Token: "root"},
+		}
+		var out bool
+		require.NoError(t, a.RPC(context.Background(), "ConfigEntry.Apply", req, &out))
+		require.True(t, out)
+	}
+
+	{
+		args := &structs.IngressGatewayConfigEntry{
+			Name: "ingress-gateway",
+			Kind: structs.IngressGateway,
+			Listeners: []structs.IngressListener{
+				{
+					Port:     8888,
+					Protocol: "http",
+					Services: []structs.IngressService{
+						{Name: "db"},
+					},
+				},
+			},
+		}
+
+		req := structs.ConfigEntryRequest{
+			Op:         structs.ConfigEntryUpsert,
+			Datacenter: "dc1",
+			Entry:      args,
+		}
+		var out bool
+		require.NoError(t, a.RPC(context.Background(), "ConfigEntry.Apply", req, &out))
+		require.True(t, out)
+	}
+
+	m := new(dns.Msg)
+	m.SetQuestion("db.ingress.consul.", dns.TypeA)
+
+	c := new(dns.Client)
+	in, _, err := c.Exchange(m, a.DNSAddr())
+	require.NoError(t, err)
+	require.Len(t, in.Answer, 2)
+
+	addrs := make([]string, 0, len(in.Answer))
+	for _, answer := range in.Answer {
+		aRec, ok := answer.(*dns.A)
+		require.True(t, ok)
+		addrs = append(addrs, aRec.A.String())
+	}
+	require.ElementsMatch(t, []string{"127.0.0.71", "127.0.0.72"}, addrs)
 }
 
 func TestDNS_ExternalServiceLookup(t *testing.T) {

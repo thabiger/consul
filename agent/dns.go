@@ -88,10 +88,10 @@ type dnsServerConfig struct {
 	// LocalityAwareLookup is not "off".
 	Locality *structs.Locality
 	// LocalityAwareLookupServiceAllowlist, when non-empty, limits locality-
-	// aware filtering to these exact service names.
+	// aware filtering to these exact DNS-normalized service names.
 	LocalityAwareLookupServiceAllowlist map[string]struct{}
 	// LocalityAwareLookupServiceBlocklist, when non-empty, skips locality-
-	// aware filtering for these exact service names.
+	// aware filtering for these exact DNS-normalized service names.
 	LocalityAwareLookupServiceBlocklist map[string]struct{}
 	MaxStale                            time.Duration
 	UseCache                            bool
@@ -270,15 +270,16 @@ func (cfg *dnsServerConfig) GetTTLForService(service string) (time.Duration, boo
 	return 0, false
 }
 
-// serviceNameSet builds an O(1) lookup set from a list of service names.
-// Returns nil when the list is empty so callers can treat unset and empty alike.
+// serviceNameSet builds an O(1) lookup set from a list of DNS-normalized
+// service names. Returns nil when the list is empty so callers can treat unset
+// and empty alike.
 func serviceNameSet(names []string) map[string]struct{} {
 	if len(names) == 0 {
 		return nil
 	}
 	set := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		set[name] = struct{}{}
+		set[strings.ToLower(name)] = struct{}{}
 	}
 	return set
 }
@@ -287,6 +288,7 @@ func serviceNameSet(names []string) map[string]struct{} {
 // run for the given service name, based on the configured allowlist/blocklist.
 // When neither list is set, locality applies to all services.
 func (cfg *dnsServerConfig) localityAwareLookupAppliesTo(service string) bool {
+	service = strings.ToLower(service)
 	if len(cfg.LocalityAwareLookupServiceAllowlist) > 0 {
 		_, ok := cfg.LocalityAwareLookupServiceAllowlist[service]
 		return ok
@@ -296,6 +298,16 @@ func (cfg *dnsServerConfig) localityAwareLookupAppliesTo(service string) bool {
 		return !blocked
 	}
 	return true
+}
+
+// localityAwareLookupAppliesToLookup reports whether locality-aware filtering
+// should run for this DNS service lookup. Direct Connect and ingress DNS
+// lookups have their own mesh/gateway semantics and are intentionally excluded.
+func (cfg *dnsServerConfig) localityAwareLookupAppliesToLookup(lookup serviceLookup) bool {
+	if lookup.Connect || lookup.Ingress {
+		return false
+	}
+	return cfg.localityAwareLookupAppliesTo(lookup.Service)
 }
 
 func (d *DNSServer) ListenAndServe(network, addr string, notif func()) error {
@@ -1598,7 +1610,7 @@ func (d *DNSServer) handleServiceQuery(cfg *dnsRequestConfig, lookup serviceLook
 	}
 
 	if cfg.LocalityAwareLookup != localityAwareLookupModeOff &&
-		cfg.localityAwareLookupAppliesTo(lookup.Service) {
+		cfg.localityAwareLookupAppliesToLookup(lookup) {
 		out.Nodes = filterCheckServiceNodesForLocalityAwareLookup(out.Nodes, cfg.Locality, cfg.LocalityAwareLookup)
 	}
 
@@ -1824,6 +1836,8 @@ func (d *DNSServer) handlePreparedQuery(cfg *dnsRequestConfig, datacenter, query
 		return errNameNotFound
 	}
 
+	// Prepared-query DNS remains part of classic DNS consumption, so apply
+	// locality-aware filtering to its resolved service candidates.
 	if cfg.LocalityAwareLookup != localityAwareLookupModeOff &&
 		cfg.localityAwareLookupAppliesTo(out.Service) {
 		out.Nodes = filterCheckServiceNodesForLocalityAwareLookup(out.Nodes, cfg.Locality, cfg.LocalityAwareLookup)
