@@ -2396,6 +2396,102 @@ func TestLoad_IntegrationWithFlags(t *testing.T) {
 		},
 	})
 	run(t, testCase{
+		desc: "dns locality_aware_lookup is always when configured",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup": "always" }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup = "always" }
+			`},
+		expected: func(rt *RuntimeConfig) {
+			rt.DataDir = dataDir
+			rt.DNSLocalityAwareLookup = "always"
+		},
+	})
+	run(t, testCase{
+		desc: "dns locality_aware_lookup is balanced when configured",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup": "balanced" }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup = "balanced" }
+			`},
+		expected: func(rt *RuntimeConfig) {
+			rt.DataDir = dataDir
+			rt.DNSLocalityAwareLookup = "balanced"
+		},
+	})
+	run(t, testCase{
+		desc: "dns locality_aware_lookup_service_allowlist when configured",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup_service_allowlist": ["db", "api"] }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup_service_allowlist = ["db", "api"] }
+			`},
+		expected: func(rt *RuntimeConfig) {
+			rt.DataDir = dataDir
+			rt.DNSLocalityAwareLookupServiceAllowlist = []string{"db", "api"}
+		},
+	})
+	run(t, testCase{
+		desc: "dns locality_aware_lookup_service_blocklist when configured",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup_service_blocklist": ["cache"] }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup_service_blocklist = ["cache"] }
+			`},
+		expected: func(rt *RuntimeConfig) {
+			rt.DataDir = dataDir
+			rt.DNSLocalityAwareLookupServiceBlocklist = []string{"cache"}
+		},
+	})
+	run(t, testCase{
+		desc: "dns locality_aware_lookup allowlist and blocklist are mutually exclusive",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": {
+					"locality_aware_lookup_service_allowlist": ["db"],
+					"locality_aware_lookup_service_blocklist": ["cache"]
+				}
+			}`},
+		hcl: []string{`
+				dns_config = {
+					locality_aware_lookup_service_allowlist = ["db"]
+					locality_aware_lookup_service_blocklist = ["cache"]
+				}
+			`},
+		expectedErr: "dns_config.locality_aware_lookup_service_allowlist and locality_aware_lookup_service_blocklist are mutually exclusive",
+	})
+	run(t, testCase{
+		desc: "dns locality_aware_lookup_service_allowlist rejects empty service names",
+		args: []string{
+			`-data-dir=` + dataDir,
+		},
+		json: []string{`{
+				"dns_config": { "locality_aware_lookup_service_allowlist": [""] }
+			}`},
+		hcl: []string{`
+				dns_config = { locality_aware_lookup_service_allowlist = [""] }
+			`},
+		expectedErr: "dns_config.locality_aware_lookup_service_allowlist cannot contain empty service names",
+	})
+	run(t, testCase{
 		desc: "sidecar_service can't have ID",
 		args: []string{
 			`-data-dir=` + dataDir,
@@ -6508,46 +6604,48 @@ func TestLoad_FullConfig(t *testing.T) {
 			NodeID:       types.NodeID("AsUIlw99"),
 			NodeName:     "otlLxGaI",
 		},
-		DNSAddrs:                         []net.Addr{tcpAddr("93.95.95.81:7001"), udpAddr("93.95.95.81:7001")},
-		DNSARecordLimit:                  29907,
-		DNSAllowStale:                    true,
-		DNSDisableCompression:            true,
-		DNSDomain:                        "7W1xXSqd",
-		DNSAltDomain:                     "1789hsd",
-		DNSEnableTruncate:                true,
-		DNSMaxStale:                      29685 * time.Second,
-		DNSNodeTTL:                       7084 * time.Second,
-		DNSOnlyPassing:                   true,
-		DNSPort:                          7001,
-		DNSRecursorStrategy:              "sequential",
-		DNSRecursorTimeout:               4427 * time.Second,
-		DNSRecursors:                     []string{"63.38.39.58", "92.49.18.18"},
-		DNSSOA:                           RuntimeSOAConfig{Refresh: 3600, Retry: 600, Expire: 86400, Minttl: 0},
-		DNSServiceTTL:                    map[string]time.Duration{"*": 32030 * time.Second},
-		DNSUDPAnswerLimit:                29909,
-		DNSNodeMetaTXT:                   true,
-		DNSUseCache:                      true,
-		DNSCacheMaxAge:                   5 * time.Minute,
-		DataDir:                          dataDir,
-		Datacenter:                       "rzo029wg",
-		DefaultQueryTime:                 16743 * time.Second,
-		DisableAnonymousSignature:        true,
-		DisableCoordinates:               true,
-		DisableHostNodeID:                true,
-		DisableHTTPUnprintableCharFilter: true,
-		DisableKeyringFile:               true,
-		DisableRemoteExec:                true,
-		DisableUpdateCheck:               true,
-		DiscardCheckOutput:               true,
-		DiscoveryMaxStale:                5 * time.Second,
-		EnableAgentTLSForChecks:          true,
-		EnableCentralServiceConfig:       false,
-		EnableDebug:                      true,
-		DisableKVKeyValidation:           false,
-		EnableRemoteScriptChecks:         true,
-		EnableLocalScriptChecks:          true,
-		EncryptKey:                       "A4wELWqH",
-		Experiments:                      []string{"foo"},
+		DNSAddrs:                               []net.Addr{tcpAddr("93.95.95.81:7001"), udpAddr("93.95.95.81:7001")},
+		DNSARecordLimit:                        29907,
+		DNSAllowStale:                          true,
+		DNSLocalityAwareLookup:                 "balanced",
+		DNSLocalityAwareLookupServiceAllowlist: []string{"db", "api"},
+		DNSDisableCompression:                  true,
+		DNSDomain:                              "7W1xXSqd",
+		DNSAltDomain:                           "1789hsd",
+		DNSEnableTruncate:                      true,
+		DNSMaxStale:                            29685 * time.Second,
+		DNSNodeTTL:                             7084 * time.Second,
+		DNSOnlyPassing:                         true,
+		DNSPort:                                7001,
+		DNSRecursorStrategy:                    "sequential",
+		DNSRecursorTimeout:                     4427 * time.Second,
+		DNSRecursors:                           []string{"63.38.39.58", "92.49.18.18"},
+		DNSSOA:                                 RuntimeSOAConfig{Refresh: 3600, Retry: 600, Expire: 86400, Minttl: 0},
+		DNSServiceTTL:                          map[string]time.Duration{"*": 32030 * time.Second},
+		DNSUDPAnswerLimit:                      29909,
+		DNSNodeMetaTXT:                         true,
+		DNSUseCache:                            true,
+		DNSCacheMaxAge:                         5 * time.Minute,
+		DataDir:                                dataDir,
+		Datacenter:                             "rzo029wg",
+		DefaultQueryTime:                       16743 * time.Second,
+		DisableAnonymousSignature:              true,
+		DisableCoordinates:                     true,
+		DisableHostNodeID:                      true,
+		DisableHTTPUnprintableCharFilter:       true,
+		DisableKeyringFile:                     true,
+		DisableRemoteExec:                      true,
+		DisableUpdateCheck:                     true,
+		DiscardCheckOutput:                     true,
+		DiscoveryMaxStale:                      5 * time.Second,
+		EnableAgentTLSForChecks:                true,
+		EnableCentralServiceConfig:             false,
+		EnableDebug:                            true,
+		DisableKVKeyValidation:                 false,
+		EnableRemoteScriptChecks:               true,
+		EnableLocalScriptChecks:                true,
+		EncryptKey:                             "A4wELWqH",
+		Experiments:                            []string{"foo"},
 		StaticRuntimeConfig: StaticRuntimeConfig{
 			EncryptVerifyIncoming: true,
 			EncryptVerifyOutgoing: true,
