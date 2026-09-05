@@ -1,0 +1,64 @@
+name: custom-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. custom-1.21.x-dns-locality-20260905"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+
+      - name: Build linux binary
+        run: make GOARCH=${{ matrix.goarch }} linux
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp pkg/bin/linux_${{ matrix.goarch }}/consul dist/consul-linux-${{ matrix.goarch }}
+          cd dist
+          sha256sum consul-linux-${{ matrix.goarch }} > consul-linux-${{ matrix.goarch }}.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: consul-linux-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          body: |
+            Unofficial Consul build from thabiger/consul.
+
+            Includes custom DNS locality-aware lookup backport on release/1.21.x.
+
+            This is not an official HashiCorp Consul release.
+          files: dist/*
