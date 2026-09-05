@@ -42,7 +42,7 @@ jobs:
           install -m 0755 "pkg/bin/linux_${{ matrix.goarch }}/consul" "${package_dir}/consul"
           cp LICENSE "${package_dir}/LICENSE.txt"
           cd dist
-          zip -r "${artifact_base}.zip" "${artifact_base}"
+          zip -j "${artifact_base}.zip" "${artifact_base}/consul" "${artifact_base}/LICENSE.txt"
           sha256sum "${artifact_base}.zip" > "${artifact_base}.zip.sha256"
           rm -rf "${artifact_base}"
 
