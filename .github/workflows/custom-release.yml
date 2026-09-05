@@ -3,6 +3,9 @@ name: custom-release
 on:
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: "Branch, tag, or SHA to build"
+        required: true
       tag:
         description: "Release tag, e.g. custom-1.21.x-dns-locality-20260905"
         required: true
@@ -20,6 +23,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -31,14 +36,22 @@ jobs:
       - name: Package artifact
         run: |
           mkdir -p dist
-          cp pkg/bin/linux_${{ matrix.goarch }}/consul dist/consul-linux-${{ matrix.goarch }}
+          artifact_base="consul_${{ inputs.tag }}_linux_${{ matrix.goarch }}"
+          package_dir="dist/${artifact_base}"
+          mkdir -p "${package_dir}"
+          install -m 0755 "pkg/bin/linux_${{ matrix.goarch }}/consul" "${package_dir}/consul"
+          cp LICENSE "${package_dir}/LICENSE.txt"
           cd dist
-          sha256sum consul-linux-${{ matrix.goarch }} > consul-linux-${{ matrix.goarch }}.sha256
+          zip -r "${artifact_base}.zip" "${artifact_base}"
+          sha256sum "${artifact_base}.zip" > "${artifact_base}.zip.sha256"
+          rm -rf "${artifact_base}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: consul-linux-${{ matrix.goarch }}
-          path: dist/*
+          path: |
+            dist/*.zip
+            dist/*.sha256
 
   release:
     needs: build
@@ -61,4 +74,6 @@ jobs:
             Includes custom DNS locality-aware lookup backport on release/1.21.x.
 
             This is not an official HashiCorp Consul release.
-          files: dist/*
+          files: |
+            dist/*.zip
+            dist/*.sha256
