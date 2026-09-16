@@ -1871,7 +1871,7 @@ func (b *builder) dnsLocalityAwareLookupVal(v string) string {
 	}
 
 	switch v {
-	case "off", "always", "balanced":
+	case "off", "always", "balanced", "proportional":
 		return v
 	}
 
